@@ -3,15 +3,8 @@ import { generateChatResponse } from './lib/gemini';
 import Terminal from './components/Terminal';
 import Sidebar from './components/Sidebar';
 import Config, { AppConfig, defaultConfig } from './components/Config';
-import { FolderOpen, Terminal as TerminalIcon, Loader2 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { Loader2 } from 'lucide-react';
 import { selectWorkspace, readFile, writeFile, ensureDirectory, workspaceHandle } from './lib/fileSystem';
-
-interface Session {
-  id: string;
-  title: string;
-  updatedAt: number;
-}
 
 interface Message {
   id: string;
@@ -23,13 +16,11 @@ interface Message {
 
 export default function App() {
   const [isWorkspaceSelected, setIsWorkspaceSelected] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  // Config State
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [currentView, setCurrentView] = useState<'chat' | 'config'>('chat');
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -38,91 +29,45 @@ export default function App() {
   const handleSelectWorkspace = async () => {
     setLoading(true);
     const success = await selectWorkspace();
-    if (success) {
+    if (success && workspaceHandle) {
+      setWorkspaceName(workspaceHandle.name);
       await ensureDirectory('.ollaide');
       
-      // Load config
+      let loadedConfig = defaultConfig;
       const configStr = await readFile('.ollaide/config.json');
       if (configStr) {
-        try {
-          setConfig(JSON.parse(configStr));
-        } catch (e) {
-          console.error("Failed to parse config", e);
-        }
+        try { loadedConfig = JSON.parse(configStr); } catch (e) {}
       } else {
         await writeFile('.ollaide/config.json', JSON.stringify(defaultConfig, null, 2));
       }
+      setConfig(loadedConfig);
 
-      // Load sessions
-      const sessionsStr = await readFile('.ollaide/sessions.json');
-      if (sessionsStr) {
-        try {
-          setSessions(JSON.parse(sessionsStr));
-        } catch (e) {
-          console.error("Failed to parse sessions", e);
-        }
+      let loadedMessages: Message[] = [];
+      const msgsStr = await readFile('.ollaide/messages.json');
+      if (msgsStr) {
+        try { loadedMessages = JSON.parse(msgsStr); } catch (e) {}
       } else {
-        await writeFile('.ollaide/sessions.json', JSON.stringify([]));
+        await writeFile('.ollaide/messages.json', JSON.stringify([]));
       }
+      setMessages(loadedMessages);
 
       setIsWorkspaceSelected(true);
+      setLoading(false);
+      return { loadedConfig, loadedMessages };
     }
     setLoading(false);
-  };
-
-  // Load messages when session changes
-  useEffect(() => {
-    const loadMessages = async () => {
-      if (!currentSessionId) {
-        setMessages([]);
-        return;
-      }
-      const msgsStr = await readFile(`.ollaide/sessions/${currentSessionId}.json`);
-      if (msgsStr) {
-        try {
-          setMessages(JSON.parse(msgsStr));
-        } catch (e) {
-          console.error("Failed to parse messages", e);
-          setMessages([]);
-        }
-      } else {
-        setMessages([]);
-      }
-    };
-    if (isWorkspaceSelected) {
-      loadMessages();
-    }
-  }, [currentSessionId, isWorkspaceSelected]);
-
-  const saveSessions = async (newSessions: Session[]) => {
-    setSessions(newSessions);
-    await writeFile('.ollaide/sessions.json', JSON.stringify(newSessions, null, 2));
-  };
-
-  const saveMessages = async (sessionId: string, newMessages: Message[]) => {
-    setMessages(newMessages);
-    await ensureDirectory('.ollaide/sessions');
-    await writeFile(`.ollaide/sessions/${sessionId}.json`, JSON.stringify(newMessages, null, 2));
-  };
-
-  const createNewSession = async (initialTitle: string = "New Session") => {
-    const newSession: Session = {
-      id: Date.now().toString(),
-      title: initialTitle,
-      updatedAt: Date.now()
-    };
-    const newSessions = [newSession, ...sessions];
-    await saveSessions(newSessions);
-    setCurrentSessionId(newSession.id);
-    return newSession.id;
+    return null;
   };
 
   const handleSendMessage = async (content: string, attachments: any[] = []) => {
-    let sessionId = currentSessionId;
-    if (!sessionId) {
-      const title = content ? content.slice(0, 30) + (content.length > 30 ? "..." : "") : "New Session";
-      sessionId = await createNewSession(title);
-      if (!sessionId) return;
+    let currentMsgs = messages;
+    let currentConfig = config;
+
+    if (!isWorkspaceSelected) {
+      const result = await handleSelectWorkspace();
+      if (!result) return; // User cancelled
+      currentMsgs = result.loadedMessages;
+      currentConfig = result.loadedConfig;
     }
 
     try {
@@ -140,21 +85,9 @@ export default function App() {
         timestamp: Date.now()
       };
 
-      const currentMsgs = [...messages, newUserMsg];
-      await saveMessages(sessionId, currentMsgs);
-
-      // Update session title and time
-      const updatedSessions = sessions.map(s => {
-        if (s.id === sessionId) {
-          return {
-            ...s,
-            title: messages.length === 0 ? (finalContent ? finalContent.slice(0, 40) + (finalContent.length > 40 ? "..." : "") : "New Session") : s.title,
-            updatedAt: Date.now()
-          };
-        }
-        return s;
-      }).sort((a, b) => b.updatedAt - a.updatedAt);
-      await saveSessions(updatedSessions);
+      const updatedMsgs = [...currentMsgs, newUserMsg];
+      setMessages(updatedMsgs);
+      await writeFile('.ollaide/messages.json', JSON.stringify(updatedMsgs, null, 2));
 
       const imageAttachments = attachments.filter(a => a.type === 'image' && a.file);
       const base64Images = await Promise.all(imageAttachments.map(async (a) => {
@@ -170,7 +103,7 @@ export default function App() {
 
       setIsAiLoading(true);
       
-      const aiResponse = await generateChatResponse(finalContent, config, base64Images);
+      const aiResponse = await generateChatResponse(finalContent, currentConfig, base64Images);
       const aiText = aiResponse.text || "Sorry, I couldn't generate a response.";
 
       const newAiMsg: Message = {
@@ -180,7 +113,9 @@ export default function App() {
         timestamp: Date.now()
       };
 
-      await saveMessages(sessionId, [...currentMsgs, newAiMsg]);
+      const finalMsgs = [...updatedMsgs, newAiMsg];
+      setMessages(finalMsgs);
+      await writeFile('.ollaide/messages.json', JSON.stringify(finalMsgs, null, 2));
 
     } catch (error) {
       console.error("Error sending message:", error);
@@ -191,16 +126,16 @@ export default function App() {
 
   const handleSaveConfig = async (newConfig: AppConfig) => {
     setConfig(newConfig);
-    await writeFile('.ollaide/config.json', JSON.stringify(newConfig, null, 2));
+    if (isWorkspaceSelected) {
+      await writeFile('.ollaide/config.json', JSON.stringify(newConfig, null, 2));
+    }
     setCurrentView('chat');
   };
 
-  const handleSignOut = () => {
-    // In local mode, "Sign Out" just means closing the workspace
+  const handleCloseWorkspace = () => {
     setIsWorkspaceSelected(false);
-    setSessions([]);
+    setWorkspaceName(null);
     setMessages([]);
-    setCurrentSessionId(null);
   };
 
   if (loading) {
@@ -208,39 +143,8 @@ export default function App() {
       <div className="h-screen w-screen bg-[#0a0a0a] flex items-center justify-center font-mono">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="text-blue-500 animate-spin" size={32} />
-          <p className="text-gray-500 text-xs tracking-widest animate-pulse uppercase">Initializing Workspace...</p>
+          <p className="text-gray-500 text-xs tracking-widest animate-pulse uppercase">Loading Workspace...</p>
         </div>
-      </div>
-    );
-  }
-
-  if (!isWorkspaceSelected) {
-    return (
-      <div className="h-screen w-screen bg-[#0a0a0a] flex items-center justify-center font-mono p-6">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="max-w-md w-full bg-[#0d0d0d] border border-[#1a1a1a] p-10 rounded-xl shadow-2xl text-center"
-        >
-          <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-8 shadow-[0_0_30px_rgba(255,255,255,0.1)]">
-            <TerminalIcon size={32} className="text-black" />
-          </div>
-          <h1 className="text-3xl font-bold text-white mb-2 tracking-tighter">OllaIDE</h1>
-          <p className="text-gray-500 text-sm mb-10 leading-relaxed">
-            Local-First AI Agent IDE. <br/>
-            Select a folder to start coding.
-          </p>
-          <button
-            onClick={handleSelectWorkspace}
-            className="w-full flex items-center justify-center gap-3 py-3.5 bg-white hover:bg-gray-100 text-black rounded-lg font-bold transition-all active:scale-[0.98]"
-          >
-            <FolderOpen size={18} />
-            SELECT WORKSPACE FOLDER
-          </button>
-          <p className="mt-8 text-[10px] text-gray-700 uppercase tracking-widest">
-            100% Local • No Cloud Database
-          </p>
-        </motion.div>
       </div>
     );
   }
@@ -248,12 +152,9 @@ export default function App() {
   return (
     <div className="h-screen w-screen flex bg-[#0a0a0a] overflow-hidden">
       <Sidebar 
-        sessions={sessions}
-        currentSessionId={currentSessionId}
-        onSessionSelect={(id) => { setCurrentSessionId(id); setCurrentView('chat'); }}
-        onNewSession={() => { createNewSession(); setCurrentView('chat'); }}
-        onSignOut={handleSignOut}
-        user={{ displayName: "Local User", email: "workspace@local", photoURL: null }}
+        workspaceName={workspaceName}
+        onSelectWorkspace={handleSelectWorkspace}
+        onCloseWorkspace={handleCloseWorkspace}
         onConfigClick={() => setCurrentView('config')}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
@@ -266,6 +167,7 @@ export default function App() {
             messages={messages}
             onSendMessage={handleSendMessage}
             isLoading={isAiLoading}
+            isWorkspaceSelected={isWorkspaceSelected}
           />
         ) : (
           <Config 

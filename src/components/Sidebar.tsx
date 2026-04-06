@@ -1,24 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, MessageSquare, LogOut, Github, Settings, Terminal as TerminalIcon } from 'lucide-react';
-import { motion } from 'motion/react';
-
-interface Session {
-  id: string;
-  title: string;
-  updatedAt: number;
-}
+import { FolderOpen, LogOut, Settings, Terminal as TerminalIcon, Folder } from 'lucide-react';
 
 interface SidebarProps {
-  sessions: Session[];
-  currentSessionId: string | null;
-  onSessionSelect: (id: string) => void;
-  onNewSession: () => void;
-  onSignOut: () => void;
-  user: {
-    displayName: string | null;
-    email: string | null;
-    photoURL: string | null;
-  } | null;
+  workspaceName: string | null;
+  onSelectWorkspace: () => void;
+  onCloseWorkspace: () => void;
   onConfigClick: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -27,12 +13,9 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ 
-  sessions, 
-  currentSessionId, 
-  onSessionSelect, 
-  onNewSession, 
-  onSignOut,
-  user,
+  workspaceName,
+  onSelectWorkspace,
+  onCloseWorkspace,
   onConfigClick,
   isCollapsed,
   onToggleCollapse,
@@ -91,68 +74,37 @@ export default function Sidebar({
         {!isCollapsed && <h1 className="text-lg font-bold tracking-tighter text-white truncate">OllaIDE</h1>}
       </div>
 
-      {/* New Chat */}
+      {/* Open Project */}
       <div className="px-4 mb-4">
         <button
-          onClick={onNewSession}
+          onClick={onSelectWorkspace}
           className={`flex items-center justify-center gap-2 py-2.5 bg-[#1a1a1a] hover:bg-[#222] border border-[#333] rounded text-xs font-bold text-gray-300 transition-all active:scale-95 ${isCollapsed ? 'w-8 h-8 p-0 mx-auto' : 'w-full'}`}
-          title="New Session"
+          title="Open Project"
         >
-          <Plus size={14} />
-          {!isCollapsed && "NEW SESSION"}
+          <FolderOpen size={14} />
+          {!isCollapsed && "OPEN PROJECT"}
         </button>
       </div>
 
-      {/* Sessions List */}
+      {/* Current Project */}
       <div className="flex-1 overflow-y-auto px-2 space-y-1 scrollbar-hide">
         {!isCollapsed && (
           <div className="px-3 mb-2">
-            <p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">Recent Activity</p>
+            <p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">Current Workspace</p>
           </div>
         )}
-        {sessions.map((session) => (
-          <button
-            key={session.id}
-            onClick={() => onSessionSelect(session.id)}
-            className={`flex items-center gap-3 py-2 rounded text-left text-xs transition-colors group ${
-              currentSessionId === session.id 
-                ? 'bg-[#1a1a1a] text-white border border-[#333]' 
-                : 'text-gray-500 hover:bg-[#141414] hover:text-gray-300'
-            } ${isCollapsed ? 'justify-center px-0 w-10 h-10 mx-auto' : 'w-full px-3'}`}
-            title={session.title}
-          >
-            <MessageSquare size={14} className={currentSessionId === session.id ? 'text-blue-400' : 'text-gray-700'} />
-            {!isCollapsed && <span className="truncate flex-1">{session.title}</span>}
-          </button>
-        ))}
+        {workspaceName ? (
+          <div className={`flex items-center gap-3 py-2 rounded text-left text-xs bg-[#1a1a1a] text-white border border-[#333] ${isCollapsed ? 'justify-center px-0 w-10 h-10 mx-auto' : 'w-full px-3'}`} title={workspaceName}>
+            <Folder size={14} className="text-blue-400 shrink-0" />
+            {!isCollapsed && <span className="truncate flex-1">{workspaceName}</span>}
+          </div>
+        ) : (
+          !isCollapsed && <p className="text-xs text-gray-600 px-3 italic">No project selected</p>
+        )}
       </div>
 
-      {/* Footer / User */}
+      {/* Footer */}
       <div className={`p-4 border-t border-[#1a1a1a] flex flex-col gap-4 ${isCollapsed ? 'items-center' : ''}`}>
-        {user && !isCollapsed && (
-          <div className="flex items-center gap-3 px-2">
-            <img 
-              src={user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName || 'User'}&background=random`} 
-              alt="Avatar" 
-              className="w-8 h-8 rounded border border-[#333]"
-              referrerPolicy="no-referrer"
-            />
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-gray-300 truncate">{user.displayName || 'Anonymous'}</p>
-              <p className="text-[10px] text-gray-600 truncate">{user.email}</p>
-            </div>
-          </div>
-        )}
-        {user && isCollapsed && (
-          <img 
-            src={user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName || 'User'}&background=random`} 
-            alt="Avatar" 
-            className="w-8 h-8 rounded border border-[#333]"
-            referrerPolicy="no-referrer"
-            title={user.displayName || 'User'}
-          />
-        )}
-
         <div className={`grid gap-2 ${isCollapsed ? 'grid-cols-1' : 'grid-cols-2'}`}>
           <button 
             onClick={onConfigClick}
@@ -163,12 +115,12 @@ export default function Sidebar({
             {!isCollapsed && "CONFIG"}
           </button>
           <button 
-            onClick={onSignOut}
+            onClick={onCloseWorkspace}
             className={`flex items-center justify-center gap-2 py-2 text-[10px] text-red-500/70 hover:text-red-400 hover:bg-red-500/5 rounded transition-colors ${isCollapsed ? 'w-8 h-8 p-0' : ''}`}
-            title="Exit"
+            title="Close Workspace"
           >
             <LogOut size={12} />
-            {!isCollapsed && "EXIT"}
+            {!isCollapsed && "CLOSE"}
           </button>
         </div>
       </div>

@@ -30,9 +30,10 @@ interface TerminalProps {
   messages: Message[];
   onSendMessage: (content: string, attachments: Attachment[]) => void;
   isLoading: boolean;
+  isWorkspaceSelected: boolean;
 }
 
-export default function Terminal({ messages, onSendMessage, isLoading }: TerminalProps) {
+export default function Terminal({ messages, onSendMessage, isLoading, isWorkspaceSelected }: TerminalProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -293,7 +294,7 @@ export default function Terminal({ messages, onSendMessage, isLoading }: Termina
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder="Type a command, paste text/images, or drag files here..."
+            placeholder={isWorkspaceSelected ? "Type a command, paste text/images, or drag files here..." : "Type a prompt to select a folder and start..."}
             className="w-full bg-transparent py-3 pr-16 text-sm focus:outline-none resize-none max-h-[200px] overflow-y-auto placeholder:text-gray-700"
             disabled={isLoading}
             rows={1}
