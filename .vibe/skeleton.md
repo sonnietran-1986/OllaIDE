@@ -1,0 +1,12 @@
+# OllaIDE Skeleton
+- src/
+  - components/
+    - Sidebar.tsx: Quản lý danh sách phiên chat và thông tin người dùng.
+    - Terminal.tsx: Giao diện chat chính phong cách terminal.
+  - lib/
+    - firebase.ts: Cấu hình Firebase SDK.
+    - gemini.ts: Tích hợp Gemini AI (Flash & Pro).
+  - App.tsx: Logic chính của ứng dụng.
+  - main.tsx: Entry point.
+- firebase-blueprint.json: Cấu trúc dữ liệu Firestore.
+- firestore.rules: Quy tắc bảo mật Firestore.

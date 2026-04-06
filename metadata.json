@@ -1,0 +1,5 @@
+{
+  "name": "OllaIDE - Minimalist AI Agent IDE",
+  "description": "Một Web IDE AI Agent với giao diện tối giản phong cách terminal, tích hợp Gemini và Firebase.",
+  "requestFramePermissions": []
+}
