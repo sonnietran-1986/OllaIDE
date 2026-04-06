@@ -5,7 +5,7 @@ import { motion } from 'motion/react';
 interface Session {
   id: string;
   title: string;
-  updatedAt: Date;
+  updatedAt: number;
 }
 
 interface SidebarProps {

@@ -1,145 +1,123 @@
 import React, { useState, useEffect } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, setDoc, getDoc } from 'firebase/firestore';
-import { auth, db, googleProvider, OperationType, handleFirestoreError } from './lib/firebase';
 import { generateChatResponse } from './lib/gemini';
 import Terminal from './components/Terminal';
 import Sidebar from './components/Sidebar';
 import Config, { AppConfig, defaultConfig } from './components/Config';
-import { LogIn, Terminal as TerminalIcon, Loader2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { FolderOpen, Terminal as TerminalIcon, Loader2 } from 'lucide-react';
+import { motion } from 'motion/react';
+import { selectWorkspace, readFile, writeFile, ensureDirectory, workspaceHandle } from './lib/fileSystem';
 
 interface Session {
   id: string;
   title: string;
-  updatedAt: any;
+  updatedAt: number;
 }
 
 interface Message {
   id: string;
   role: 'user' | 'model';
   content: string;
-  timestamp: any;
+  timestamp: number;
+  attachments?: any[];
 }
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [isWorkspaceSelected, setIsWorkspaceSelected] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
   // Config State
-  const [config, setConfig] = useState<AppConfig>(() => {
-    const saved = localStorage.getItem('ollaide_config');
-    return saved ? JSON.parse(saved) : defaultConfig;
-  });
+  const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [currentView, setCurrentView] = useState<'chat' | 'config'>('chat');
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
-  // Auth Listener
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      if (user) {
-        // Ensure user doc exists
-        const userRef = doc(db, 'users', user.uid);
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-          await setDoc(userRef, {
-            uid: user.uid,
-            email: user.email,
-            displayName: user.displayName,
-            photoURL: user.photoURL,
-            createdAt: serverTimestamp(),
-            lastLogin: serverTimestamp()
-          });
-        } else {
-          await setDoc(userRef, { lastLogin: serverTimestamp() }, { merge: true });
+  const handleSelectWorkspace = async () => {
+    setLoading(true);
+    const success = await selectWorkspace();
+    if (success) {
+      await ensureDirectory('.ollaide');
+      
+      // Load config
+      const configStr = await readFile('.ollaide/config.json');
+      if (configStr) {
+        try {
+          setConfig(JSON.parse(configStr));
+        } catch (e) {
+          console.error("Failed to parse config", e);
         }
+      } else {
+        await writeFile('.ollaide/config.json', JSON.stringify(defaultConfig, null, 2));
       }
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
 
-  // Sessions Listener
-  useEffect(() => {
-    if (!user) return;
-    const q = query(
-      collection(db, 'sessions'),
-      where('userId', '==', user.uid),
-      orderBy('updatedAt', 'desc')
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const sessionList = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Session[];
-      setSessions(sessionList);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'sessions'));
-    return () => unsubscribe();
-  }, [user]);
+      // Load sessions
+      const sessionsStr = await readFile('.ollaide/sessions.json');
+      if (sessionsStr) {
+        try {
+          setSessions(JSON.parse(sessionsStr));
+        } catch (e) {
+          console.error("Failed to parse sessions", e);
+        }
+      } else {
+        await writeFile('.ollaide/sessions.json', JSON.stringify([]));
+      }
 
-  // Messages Listener
-  useEffect(() => {
-    if (!currentSessionId) {
-      setMessages([]);
-      return;
+      setIsWorkspaceSelected(true);
     }
-    const q = query(
-      collection(db, `sessions/${currentSessionId}/messages`),
-      orderBy('timestamp', 'asc')
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const messageList = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Message[];
-      setMessages(messageList);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, `sessions/${currentSessionId}/messages`));
-    return () => unsubscribe();
-  }, [currentSessionId]);
-
-  const handleSignIn = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error("Sign in error:", error);
-    }
+    setLoading(false);
   };
 
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-      setCurrentSessionId(null);
-    } catch (error) {
-      console.error("Sign out error:", error);
+  // Load messages when session changes
+  useEffect(() => {
+    const loadMessages = async () => {
+      if (!currentSessionId) {
+        setMessages([]);
+        return;
+      }
+      const msgsStr = await readFile(`.ollaide/sessions/${currentSessionId}.json`);
+      if (msgsStr) {
+        try {
+          setMessages(JSON.parse(msgsStr));
+        } catch (e) {
+          console.error("Failed to parse messages", e);
+          setMessages([]);
+        }
+      } else {
+        setMessages([]);
+      }
+    };
+    if (isWorkspaceSelected) {
+      loadMessages();
     }
+  }, [currentSessionId, isWorkspaceSelected]);
+
+  const saveSessions = async (newSessions: Session[]) => {
+    setSessions(newSessions);
+    await writeFile('.ollaide/sessions.json', JSON.stringify(newSessions, null, 2));
+  };
+
+  const saveMessages = async (sessionId: string, newMessages: Message[]) => {
+    setMessages(newMessages);
+    await ensureDirectory('.ollaide/sessions');
+    await writeFile(`.ollaide/sessions/${sessionId}.json`, JSON.stringify(newMessages, null, 2));
   };
 
   const createNewSession = async (initialTitle: string = "New Session") => {
-    if (!user) return null;
-    try {
-      const docRef = await addDoc(collection(db, 'sessions'), {
-        userId: user.uid,
-        title: initialTitle,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-      setCurrentSessionId(docRef.id);
-      return docRef.id;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'sessions');
-      return null;
-    }
+    const newSession: Session = {
+      id: Date.now().toString(),
+      title: initialTitle,
+      updatedAt: Date.now()
+    };
+    const newSessions = [newSession, ...sessions];
+    await saveSessions(newSessions);
+    setCurrentSessionId(newSession.id);
+    return newSession.id;
   };
 
   const handleSendMessage = async (content: string, attachments: any[] = []) => {
-    if (!user) return;
-
     let sessionId = currentSessionId;
     if (!sessionId) {
       const title = content ? content.slice(0, 30) + (content.length > 30 ? "..." : "") : "New Session";
@@ -148,34 +126,36 @@ export default function App() {
     }
 
     try {
-      // Process text attachments to append to content
       let finalContent = content;
       const textAttachments = attachments.filter(a => a.type === 'text' && a.textContent);
       if (textAttachments.length > 0) {
         finalContent += '\n\n' + textAttachments.map(a => `--- ${a.name} ---\n${a.textContent}`).join('\n\n');
       }
 
-      // Add user message
-      await addDoc(collection(db, `sessions/${sessionId}/messages`), {
-        sessionId,
+      const newUserMsg: Message = {
+        id: Date.now().toString(),
         role: 'user',
         content: finalContent,
-        attachments: attachments.map(a => ({ id: a.id, type: a.type, name: a.name })), // Store metadata only for now
-        timestamp: serverTimestamp()
-      });
+        attachments: attachments.map(a => ({ id: a.id, type: a.type, name: a.name })),
+        timestamp: Date.now()
+      };
 
-      // Update session title if it's the first message
-      if (messages.length === 0) {
-        const title = finalContent ? finalContent.slice(0, 40) + (finalContent.length > 40 ? "..." : "") : "New Session";
-        await setDoc(doc(db, 'sessions', sessionId), { 
-          title,
-          updatedAt: serverTimestamp() 
-        }, { merge: true });
-      } else {
-        await setDoc(doc(db, 'sessions', sessionId), { updatedAt: serverTimestamp() }, { merge: true });
-      }
+      const currentMsgs = [...messages, newUserMsg];
+      await saveMessages(sessionId, currentMsgs);
 
-      // Process image attachments
+      // Update session title and time
+      const updatedSessions = sessions.map(s => {
+        if (s.id === sessionId) {
+          return {
+            ...s,
+            title: messages.length === 0 ? (finalContent ? finalContent.slice(0, 40) + (finalContent.length > 40 ? "..." : "") : "New Session") : s.title,
+            updatedAt: Date.now()
+          };
+        }
+        return s;
+      }).sort((a, b) => b.updatedAt - a.updatedAt);
+      await saveSessions(updatedSessions);
+
       const imageAttachments = attachments.filter(a => a.type === 'image' && a.file);
       const base64Images = await Promise.all(imageAttachments.map(async (a) => {
         return new Promise<{mimeType: string, data: string}>((resolve) => {
@@ -190,17 +170,17 @@ export default function App() {
 
       setIsAiLoading(true);
       
-      // AI Response
       const aiResponse = await generateChatResponse(finalContent, config, base64Images);
       const aiText = aiResponse.text || "Sorry, I couldn't generate a response.";
 
-      // Add AI message
-      await addDoc(collection(db, `sessions/${sessionId}/messages`), {
-        sessionId,
+      const newAiMsg: Message = {
+        id: Date.now().toString(),
         role: 'model',
         content: aiText,
-        timestamp: serverTimestamp()
-      });
+        timestamp: Date.now()
+      };
+
+      await saveMessages(sessionId, [...currentMsgs, newAiMsg]);
 
     } catch (error) {
       console.error("Error sending message:", error);
@@ -209,10 +189,18 @@ export default function App() {
     }
   };
 
-  const handleSaveConfig = (newConfig: AppConfig) => {
+  const handleSaveConfig = async (newConfig: AppConfig) => {
     setConfig(newConfig);
-    localStorage.setItem('ollaide_config', JSON.stringify(newConfig));
+    await writeFile('.ollaide/config.json', JSON.stringify(newConfig, null, 2));
     setCurrentView('chat');
+  };
+
+  const handleSignOut = () => {
+    // In local mode, "Sign Out" just means closing the workspace
+    setIsWorkspaceSelected(false);
+    setSessions([]);
+    setMessages([]);
+    setCurrentSessionId(null);
   };
 
   if (loading) {
@@ -220,13 +208,13 @@ export default function App() {
       <div className="h-screen w-screen bg-[#0a0a0a] flex items-center justify-center font-mono">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="text-blue-500 animate-spin" size={32} />
-          <p className="text-gray-500 text-xs tracking-widest animate-pulse uppercase">Initializing OllaIDE...</p>
+          <p className="text-gray-500 text-xs tracking-widest animate-pulse uppercase">Initializing Workspace...</p>
         </div>
       </div>
     );
   }
 
-  if (!user) {
+  if (!isWorkspaceSelected) {
     return (
       <div className="h-screen w-screen bg-[#0a0a0a] flex items-center justify-center font-mono p-6">
         <motion.div 
@@ -239,18 +227,18 @@ export default function App() {
           </div>
           <h1 className="text-3xl font-bold text-white mb-2 tracking-tighter">OllaIDE</h1>
           <p className="text-gray-500 text-sm mb-10 leading-relaxed">
-            Minimalist AI Agent IDE. <br/>
-            Powered by Gemini 3.1 Pro.
+            Local-First AI Agent IDE. <br/>
+            Select a folder to start coding.
           </p>
           <button
-            onClick={handleSignIn}
+            onClick={handleSelectWorkspace}
             className="w-full flex items-center justify-center gap-3 py-3.5 bg-white hover:bg-gray-100 text-black rounded-lg font-bold transition-all active:scale-[0.98]"
           >
-            <LogIn size={18} />
-            CONTINUE WITH GOOGLE
+            <FolderOpen size={18} />
+            SELECT WORKSPACE FOLDER
           </button>
           <p className="mt-8 text-[10px] text-gray-700 uppercase tracking-widest">
-            Secure • Private • Fast
+            100% Local • No Cloud Database
           </p>
         </motion.div>
       </div>
@@ -265,7 +253,7 @@ export default function App() {
         onSessionSelect={(id) => { setCurrentSessionId(id); setCurrentView('chat'); }}
         onNewSession={() => { createNewSession(); setCurrentView('chat'); }}
         onSignOut={handleSignOut}
-        user={user}
+        user={{ displayName: "Local User", email: "workspace@local", photoURL: null }}
         onConfigClick={() => setCurrentView('config')}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
